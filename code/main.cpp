@@ -41,6 +41,10 @@ private:
         glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
     auto extensionProperties = context.enumerateInstanceExtensionProperties();
+    std::cout << "available extensions:\n";
+    for (const auto &extension : extensionProperties) {
+      std::cout << '\t' << extension.extensionName << '\n';
+    }
     for (uint32_t i = 0; i < glfwExtensionCount; ++i) {
       if (std::ranges::none_of(extensionProperties,
                                [glfwExtension = glfwExtensions[i]](
