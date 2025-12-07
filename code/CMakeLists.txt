@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.29)
 
 project(VulkanTutorial)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/CMake")
 
