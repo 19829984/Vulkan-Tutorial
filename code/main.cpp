@@ -1,6 +1,7 @@
 #include "vulkan/vulkan.hpp"
 #include <algorithm>
 #include <cstdint>
+#include <iterator>
 #include <vector>
 #include <vulkan/vulkan_core.h>
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
@@ -26,6 +27,11 @@ cosntexpr bool enableValidationLayers = false;
 constexpr bool enableValidationLayers = true;
 #endif
 
+std::vector<const char *> deviceExtensions = {
+    vk::KHRSwapchainExtensionName, vk::KHRSpirv14ExtensionName,
+    vk::KHRSynchronization2ExtensionName,
+    vk::KHRCreateRenderpass2ExtensionName};
+
 class HelloTriangleApplication {
 public:
   void run() {
@@ -39,6 +45,7 @@ private:
   void initVulkan() {
     createInstance();
     setupDebugMessenger();
+    pickPhysicalDevice();
   }
 
   void createInstance() {
@@ -92,6 +99,57 @@ private:
             static_cast<uint32_t>(requiredExtensions.size()),
         .ppEnabledExtensionNames = requiredExtensions.data()};
     instance = vk::raii::Instance(context, createInfo);
+  }
+
+  void pickPhysicalDevice() {
+    std::vector<vk::raii::PhysicalDevice> devices =
+        instance.enumeratePhysicalDevices();
+
+    const auto devIter = std::ranges::find_if(devices, [&](auto const &device) {
+      auto queueFamilies = device.getQueueFamilyProperties();
+      bool isSuitable = device.getProperties().apiVersion >= VK_API_VERSION_1_3;
+
+      const auto qfpIter = std::ranges::find_if(
+          queueFamilies, [](vk::QueueFamilyProperties const &qfp) {
+            return (qfp.queueFlags & vk::QueueFlagBits::eGraphics) !=
+                   static_cast<vk::QueueFlags>(0);
+          });
+      isSuitable = isSuitable && (qfpIter != queueFamilies.end());
+
+      auto extensions = device.enumerateDeviceExtensionProperties();
+      bool found = true;
+
+      for (auto const &extension : deviceExtensions) {
+        auto extensionIter =
+            std::ranges::find_if(extensions, [extension](auto const &ext) {
+              return strcmp(ext.extensionName, extension);
+            });
+        found = found && extensionIter != extensions.end();
+      }
+      isSuitable = isSuitable && found;
+      if (isSuitable) {
+        physicalDevice = device;
+      }
+      return isSuitable;
+    });
+
+    if (devIter == devices.end()) {
+      throw std::runtime_error("Failed to fidn a suitable GPU!");
+    }
+  }
+
+  uint32_t findQueueFamilies(vk::raii::PhysicalDevice physicalDevice) {
+    std::vector<vk::QueueFamilyProperties> queueFamilyProperties =
+        physicalDevice.getQueueFamilyProperties();
+
+    auto graphicsQueueFamilyProperty =
+        std::find_if(queueFamilyProperties.begin(), queueFamilyProperties.end(),
+                     [](vk::QueueFamilyProperties const &qfp) {
+                       return qfp.queueFlags & vk::QueueFlagBits::eGraphics;
+                     });
+
+    return static_cast<uint32_t>(std::distance(queueFamilyProperties.begin(),
+                                               graphicsQueueFamilyProperty));
   }
 
   std::vector<const char *> getRequiredExtensions() {
@@ -165,6 +223,7 @@ private:
   vk::raii::Context context;
   vk::raii::Instance instance = nullptr;
   vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
+  vk::raii::PhysicalDevice physicalDevice = nullptr;
 
   // GLFW
   GLFWwindow *window;
