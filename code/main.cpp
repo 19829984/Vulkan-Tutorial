@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <iterator>
+#include <sys/types.h>
 #include <vector>
 #include <vulkan/vulkan_core.h>
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
@@ -35,8 +36,8 @@ std::vector<const char *> deviceExtensions = {
 class HelloTriangleApplication {
 public:
   void run() {
-    initVulkan();
     initWindow();
+    initVulkan();
     mainLoop();
     cleanup();
   }
@@ -46,6 +47,7 @@ private:
     createInstance();
     setupDebugMessenger();
     pickPhysicalDevice();
+    createLogicalDevice();
   }
 
   void createInstance() {
@@ -104,11 +106,11 @@ private:
   void pickPhysicalDevice() {
     std::vector<vk::raii::PhysicalDevice> devices =
         instance.enumeratePhysicalDevices();
-
+    std::cout << "Number of devices: " << devices.size() << std::endl;
     const auto devIter = std::ranges::find_if(devices, [&](auto const &device) {
       auto queueFamilies = device.getQueueFamilyProperties();
       bool isSuitable = device.getProperties().apiVersion >= VK_API_VERSION_1_3;
-
+      // Supports graphics
       const auto qfpIter = std::ranges::find_if(
           queueFamilies, [](vk::QueueFamilyProperties const &qfp) {
             return (qfp.queueFlags & vk::QueueFlagBits::eGraphics) !=
@@ -119,10 +121,11 @@ private:
       auto extensions = device.enumerateDeviceExtensionProperties();
       bool found = true;
 
-      for (auto const &extension : deviceExtensions) {
-        auto extensionIter =
-            std::ranges::find_if(extensions, [extension](auto const &ext) {
-              return strcmp(ext.extensionName, extension);
+      // Check all required device extensions are present
+      for (auto const &deviceExtension : deviceExtensions) {
+        auto extensionIter = std::ranges::find_if(
+            extensions, [deviceExtension](auto const &ext) {
+              return strcmp(ext.extensionName, deviceExtension) == 0;
             });
         found = found && extensionIter != extensions.end();
       }
@@ -136,6 +139,32 @@ private:
     if (devIter == devices.end()) {
       throw std::runtime_error("Failed to fidn a suitable GPU!");
     }
+  }
+
+  void createLogicalDevice() {
+    uint32_t graphicsIndex = findQueueFamilies(physicalDevice);
+    float queuePriority = 0.5f;
+    vk::DeviceQueueCreateInfo deviceQueueCreateInfo{
+        .queueFamilyIndex = graphicsIndex,
+        .queueCount = 1,
+        .pQueuePriorities = &queuePriority};
+
+    vk::StructureChain<vk::PhysicalDeviceFeatures2,
+                       vk::PhysicalDeviceVulkan13Features,
+                       vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>
+        featureChain{
+            {}, {.dynamicRendering = true}, {.extendedDynamicState = true}};
+
+    vk::DeviceCreateInfo deviceCreateInfo{
+        .pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>(),
+        .queueCreateInfoCount = 1,
+        .pQueueCreateInfos = &deviceQueueCreateInfo,
+        .enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size()),
+        .ppEnabledExtensionNames = deviceExtensions.data()};
+
+    device = vk::raii::Device(physicalDevice, deviceCreateInfo);
+
+    graphicsQueue = vk::raii::Queue(device, graphicsIndex, 0);
   }
 
   uint32_t findQueueFamilies(vk::raii::PhysicalDevice physicalDevice) {
@@ -224,6 +253,8 @@ private:
   vk::raii::Instance instance = nullptr;
   vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
   vk::raii::PhysicalDevice physicalDevice = nullptr;
+  vk::raii::Device device = nullptr;
+  vk::raii::Queue graphicsQueue = nullptr;
 
   // GLFW
   GLFWwindow *window;
