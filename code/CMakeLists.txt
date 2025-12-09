@@ -15,7 +15,7 @@ if(ENABLE_CPP20_MODULE)
 endif()
 
 find_package(glfw3 REQUIRED)
-# find_package(glm REQUIRED)
+find_package(glm REQUIRED)
 find_package(Vulkan REQUIRED)
 # find_package(tinyobjloader REQUIRED)
 # find_package(tinygltf REQUIRED)
