@@ -36,6 +36,9 @@ std::vector<const char *> deviceExtensions = {
     vk::KHRSynchronization2ExtensionName,
     vk::KHRCreateRenderpass2ExtensionName};
 
+std::vector<vk::DynamicState> dynamicStates = {vk::DynamicState::eViewport,
+                                               vk::DynamicState::eScissor};
+
 class HelloTriangleApplication {
 public:
   void run() {
@@ -338,6 +341,60 @@ private:
 
     vk::PipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo,
                                                         fragShaderStageInfo};
+    vk::PipelineInputAssemblyStateCreateInfo inputAssemblyInfo{
+        .topology = vk::PrimitiveTopology::eTriangleList};
+    vk::PipelineVertexInputStateCreateInfo vertexInputInfo{};
+
+    vk::PipelineDynamicStateCreateInfo dynamicState{
+        .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()),
+        .pDynamicStates = dynamicStates.data()};
+
+    // vk::Viewport viewport{.x = 0.0f,
+    //                       .y = 0.0f,
+    //                       .width = static_cast<float>(swapChainExtent.width),
+    //                       .height =
+    //                       static_cast<float>(swapChainExtent.height),
+    //                       .minDepth = 0.0f,
+    //                       .maxDepth = 1.0f};
+    // vk::Rect2D scissor{.offset = vk::Offset2D(0, 0), .extent =
+    // swapChainExtent};
+
+    vk::PipelineViewportStateCreateInfo viewportStateInfo{.viewportCount = 1,
+                                                          .pViewports = {},
+                                                          .scissorCount = 1,
+                                                          .pScissors = {}};
+
+    vk::PipelineRasterizationStateCreateInfo rasterizerInfo{
+        .depthClampEnable = vk::False,
+        .rasterizerDiscardEnable = vk::False,
+        .polygonMode = vk::PolygonMode::eFill,
+        .cullMode = vk::CullModeFlagBits::eBack,
+        .frontFace = vk::FrontFace::eClockwise,
+        .depthBiasEnable = vk::False,
+        .depthBiasSlopeFactor = 1.0f,
+        .lineWidth = 1.0f};
+    // vk::PipelineMultisampleStateCreateInfo multisamplingInfo{
+    //     .rasterizationSamples = vk::SampleCountFlagBits::e1,
+    //     .sampleShadingEnable = vk::False};
+    // vk::PipelineDepthStencilStateCreateInfo depthStencilInfo{
+    // };
+    //
+    vk::PipelineColorBlendAttachmentState colorBlendAttachment{
+        .blendEnable = vk::False,
+        .colorWriteMask =
+            vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+            vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
+    };
+    vk::PipelineColorBlendStateCreateInfo colorBlendingInfo{
+        .logicOpEnable = vk::False,
+        .logicOp = vk::LogicOp::eCopy,
+        .attachmentCount = 1,
+        .pAttachments = &colorBlendAttachment};
+
+    vk::PipelineLayoutCreateInfo pipelineLayoutInfo{
+        .setLayoutCount = 0, .pushConstantRangeCount = 0};
+
+    pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
   }
 
   vk::SurfaceFormatKHR chooseSwapSurfaceFormat(
@@ -474,6 +531,7 @@ private:
   vk::SurfaceFormatKHR swapChainSurfaceFormat;
   vk::Extent2D swapChainExtent;
   vk::Format swapChainImageFormat = vk::Format::eUndefined;
+  vk::raii::PipelineLayout pipelineLayout = nullptr;
 
   // GLFW
   GLFWwindow *window;
