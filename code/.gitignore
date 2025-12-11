@@ -13,3 +13,5 @@ CMakeUserPresets.json
 build
 .cache
 old.*
+main
+*.spv
