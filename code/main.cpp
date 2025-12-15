@@ -373,12 +373,11 @@ private:
         .depthBiasEnable = vk::False,
         .depthBiasSlopeFactor = 1.0f,
         .lineWidth = 1.0f};
-    // vk::PipelineMultisampleStateCreateInfo multisamplingInfo{
-    //     .rasterizationSamples = vk::SampleCountFlagBits::e1,
-    //     .sampleShadingEnable = vk::False};
-    // vk::PipelineDepthStencilStateCreateInfo depthStencilInfo{
-    // };
-    //
+    vk::PipelineMultisampleStateCreateInfo multisamplingInfo{
+        .rasterizationSamples = vk::SampleCountFlagBits::e1,
+        .sampleShadingEnable = vk::False};
+    vk::PipelineDepthStencilStateCreateInfo depthStencilInfo{};
+
     vk::PipelineColorBlendAttachmentState colorBlendAttachment{
         .blendEnable = vk::False,
         .colorWriteMask =
@@ -395,6 +394,23 @@ private:
         .setLayoutCount = 0, .pushConstantRangeCount = 0};
 
     pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
+
+    vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo{
+        .colorAttachmentCount = 1,
+        .pColorAttachmentFormats = &swapChainImageFormat};
+
+    vk::GraphicsPipelineCreateInfo pipelineInfo{
+        .stageCount = 2,
+        .pStages = shaderStages,
+        .pVertexInputState = &vertexInputInfo,
+        .pInputAssemblyState = &inputAssemblyInfo,
+        .pViewportState = &viewportStateInfo,
+        .pRasterizationState = &rasterizerInfo,
+        .pMultisampleState = &multisamplingInfo,
+        .pColorBlendState = &colorBlendingInfo,
+        .pDynamicState = &dynamicState,
+        .layout = pipelineLayout,
+        .renderPass = nullptr};
   }
 
   vk::SurfaceFormatKHR chooseSwapSurfaceFormat(
