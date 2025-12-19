@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <iterator>
 #include <limits>
+#include <ostream>
 #include <sys/types.h>
 #include <vector>
 #include <vulkan/vulkan_core.h>
@@ -271,9 +272,9 @@ private:
 
   void createSwapChain() {
     auto surfaceCapabilities =
-        physicalDevice.getSurfaceCapabilitiesKHR(surface);
+        physicalDevice.getSurfaceCapabilitiesKHR(*surface);
     swapChainSurfaceFormat =
-        chooseSwapSurfaceFormat(physicalDevice.getSurfaceFormatsKHR(surface));
+        chooseSwapSurfaceFormat(physicalDevice.getSurfaceFormatsKHR(*surface));
     swapChainImageFormat = swapChainSurfaceFormat.format;
     swapChainExtent = chooseSwapExtent(surfaceCapabilities);
     auto minImageCount = std::max(3u, surfaceCapabilities.minImageCount);
@@ -283,7 +284,7 @@ private:
                         : minImageCount;
     vk::SwapchainCreateInfoKHR swapChainCreateInfo{
         .flags = vk::SwapchainCreateFlagsKHR(),
-        .surface = surface,
+        .surface = *surface,
         .minImageCount = minImageCount,
         .imageFormat = swapChainImageFormat,
         .imageColorSpace = swapChainSurfaceFormat.colorSpace,
@@ -294,7 +295,7 @@ private:
         .preTransform = surfaceCapabilities.currentTransform,
         .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
         .presentMode = chooseSwapPresentMode(
-            physicalDevice.getSurfacePresentModesKHR(surface)),
+            physicalDevice.getSurfacePresentModesKHR(*surface)),
         .clipped = vk::True,
         .oldSwapchain = nullptr};
     uint32_t queueFamilyIndices[] = {graphicsFamilyIndex, presentFamilyIndex};
@@ -329,6 +330,7 @@ private:
   void createGraphicsPipeline() {
     auto shaderModule = createShaderModule(readFile("shaders/slang.spv"));
 
+    std::cout << "Shader module created" << std::endl;
     vk::PipelineShaderStageCreateInfo vertShaderStageInfo{
         .stage = vk::ShaderStageFlagBits::eVertex,
         .module = shaderModule,
@@ -400,6 +402,7 @@ private:
         .pColorAttachmentFormats = &swapChainImageFormat};
 
     vk::GraphicsPipelineCreateInfo pipelineInfo{
+        .pNext = &pipelineRenderingCreateInfo,
         .stageCount = 2,
         .pStages = shaderStages,
         .pVertexInputState = &vertexInputInfo,
@@ -411,6 +414,7 @@ private:
         .pDynamicState = &dynamicState,
         .layout = pipelineLayout,
         .renderPass = nullptr};
+    graphicsPipeline = vk::raii::Pipeline(device, VK_NULL_HANDLE, pipelineInfo);
   }
 
   vk::SurfaceFormatKHR chooseSwapSurfaceFormat(
@@ -452,6 +456,7 @@ private:
   }
 
   void initWindow() {
+    glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_WAYLAND);
     glfwInit();
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -462,15 +467,23 @@ private:
   }
 
   void mainLoop() {
+    // for (uint32_t i = 0; i < 1000; ++i) {
+
+    std::cout << "Entering Main Loop" << std::endl;
+    // }
     while (!glfwWindowShouldClose(window)) {
       glfwPollEvents();
     }
+    std::cout << "Loop exit" << std::endl;
   }
 
   void cleanup() {
+
+    std::cout << "Entering cleanup" << std::endl;
     glfwDestroyWindow(window);
 
     glfwTerminate();
+    std::cout << "GLFW Terminated" << std::endl;
   }
 
   [[nodiscard]] vk::raii::ShaderModule
@@ -530,27 +543,27 @@ private:
 #pragma endregion
 
 private:
+  // GLFW
+  GLFWwindow *window = nullptr;
   // Vulkan
   vk::raii::Context context;
   vk::raii::Instance instance = nullptr;
   vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
+  vk::raii::SurfaceKHR surface = nullptr;
   vk::raii::PhysicalDevice physicalDevice = nullptr;
   vk::raii::Device device = nullptr;
-  uint32_t graphicsFamilyIndex = 0;
-  uint32_t presentFamilyIndex = 0;
   vk::raii::Queue graphicsQueue = nullptr;
   vk::raii::Queue presentQueue = nullptr;
-  vk::raii::SurfaceKHR surface = nullptr;
   vk::raii::SwapchainKHR swapChain = nullptr;
   std::vector<vk::Image> swapChainImages;
   std::vector<vk::raii::ImageView> swapChainImageViews;
   vk::SurfaceFormatKHR swapChainSurfaceFormat;
   vk::Extent2D swapChainExtent;
   vk::Format swapChainImageFormat = vk::Format::eUndefined;
+  uint32_t graphicsFamilyIndex = 0;
+  uint32_t presentFamilyIndex = 0;
   vk::raii::PipelineLayout pipelineLayout = nullptr;
-
-  // GLFW
-  GLFWwindow *window;
+  vk::raii::Pipeline graphicsPipeline = nullptr;
 };
 
 int main() {
