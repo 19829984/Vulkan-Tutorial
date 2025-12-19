@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.29)
 project(VulkanTutorial)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_CXX_FLAGS "-fsanitize=address")
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/CMake")
 
@@ -85,24 +86,24 @@ find_program(GLSLANG_VALIDATOR "glslangValidator" HINTS $ENV{VULKAN_SDK}/bin REQ
 set_property(TARGET glslang::validator PROPERTY IMPORTED_LOCATION "${GLSLANG_VALIDATOR}")
 find_program(SLANGC_EXECUTABLE slangc HINTS $ENV{VULKAN_SDK}/bin REQUIRED)
 
-function(add_shaders_targetTARGET)
-  cmake_parse_arguments("SHADER" "" "CHAPTER_NAME" "SOURCES" ${ARGN})
-  set(SHADERS_DIR ${SHADER_CHAPTER_NAME}/shaders)
-  add_custom_command(
-    OUTPUT ${SHADERS_DIR}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_DIR}
-    )
-  add_custom_command(
-    OUTPUT ${SHADERS_DIR}/frag.spv ${SHADERS_DIR}/vert.spv
-    COMMAND glslang::validator
-    ARGS --target-env vulkan1.0 ${SHADER_SOURCES} --quiet
-    WORKING_DIRECTORY ${SHADERS_DIR}
-    DEPENDS ${SHADERS_DIR} ${SHADER_SOURCES}
-    COMMENT "Compiling Shaders"
-    VERBATIM
-    )
-  add_custom_target(${TARGET} DEPENDS ${SHADERS_DIR}/frag.spv ${SHADERS_DIR}/vert.spv)
-endfunction()
+# function(add_shaders_targetTARGET)
+#   cmake_parse_arguments("SHADER" "" "CHAPTER_NAME" "SOURCES" ${ARGN})
+#   set(SHADERS_DIR ${SHADER_CHAPTER_NAME}/shaders)
+#   add_custom_command(
+#     OUTPUT ${SHADERS_DIR}
+#     COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_DIR}
+#     )
+#   add_custom_command(
+#     OUTPUT ${SHADERS_DIR}/frag.spv ${SHADERS_DIR}/vert.spv
+#     COMMAND glslang::validator
+#     ARGS --target-env vulkan1.0 ${SHADER_SOURCES} --quiet
+#     WORKING_DIRECTORY ${SHADERS_DIR}
+#     DEPENDS ${SHADERS_DIR} ${SHADER_SOURCES}
+#     COMMENT "Compiling Shaders"
+#     VERBATIM
+#     )
+#   add_custom_target(${TARGET} DEPENDS ${SHADERS_DIR}/frag.spv ${SHADERS_DIR}/vert.spv)
+# endfunction()
 
 function(add_slang_shader_target TARGET)
   cmake_parse_arguments("SHADER" "" "CHAPTER_NAME" "SOURCES" ${ARGN})
@@ -112,10 +113,10 @@ function(add_slang_shader_target TARGET)
   if(HAS_COMPUTE)
     list(APPEND ENTRY_POINTS -entry compMain)
   endif()
-  add_custom_command(
-          OUTPUT ${SHADERS_DIR}
-          COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_DIR}
-  )
+  # add_custom_command(
+  #         OUTPUT ${SHADERS_DIR}
+  #         COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_DIR}
+  # )
   add_custom_command(
           OUTPUT  ${SHADERS_DIR}/slang.spv
           COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCES} -target spirv -profile spirv_1_4+spvRayQueryKHR -emit-spirv-directly -fvk-use-entrypoint-name ${ENTRY_POINTS} -o slang.spv
