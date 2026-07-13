@@ -137,6 +137,7 @@ function (add_chapter CHAPTER_NAME)
   set_target_properties (${CHAPTER_NAME} PROPERTIES CXX_STANDARD 20)
   target_link_libraries (${CHAPTER_NAME} Vulkan::cppm glfw)
   target_include_directories (${CHAPTER_NAME} PRIVATE ${STB_INCLUDEDIR})
+  target_compile_definitions(${CHAPTER_NAME} PRIVATE $<$<CONFIG:Debug>:DEBUG>)
 
   # Add compile definition if C++ 20 module is enabled
   if(ENABLE_CPP20_MODULE)
