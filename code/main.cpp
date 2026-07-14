@@ -60,8 +60,7 @@ private:
     createSurface();
     pickPhysicalDevice();
     createLogicalDevice();
-    createSwapChain();
-    createImageViews();
+    recreateSwapChain();
     createGraphicsPipeline();
     createCommandPool();
     createCommandBuffers();
@@ -313,6 +312,22 @@ private:
     swapChainImages = swapChain.getImages();
   }
 
+  void cleanupSwapChain()
+  {
+    device.waitIdle();
+    swapChainImageViews.clear();
+    swapChainImages.clear();
+    swapChain = nullptr;
+  }
+
+  void recreateSwapChain()
+  {
+    cleanupSwapChain();
+
+    createSwapChain();
+    createImageViews();
+  }
+
   void createImageViews()
   {
     swapChainImageViews.clear();
@@ -462,7 +477,7 @@ private:
     glfwInit();
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    // glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
     window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan Tutorial", nullptr, nullptr);
   }
@@ -495,10 +510,19 @@ private:
     if (fenceResult != vk::Result::eSuccess) {
       throw std::runtime_error("Failed to wait for fence!");
     }
-    device.resetFences(fence);
 
     // Acquire Image
     auto [result, imageIndex] = swapChain.acquireNextImage(UINT64_MAX, presentCompleteSemaphore, nullptr);
+    if (result == vk::Result::eErrorOutOfDateKHR) {
+      recreateSwapChain();
+      return;
+    }
+    if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR) {
+      assert(result == vk::Result::eTimeout || result == vk::Result::eNotReady);
+      throw std::runtime_error("Failed to acquire swap chain image!");
+    }
+
+    device.resetFences(fence);
     commandBuffer.reset();
     recordCommandBuffer(imageIndex);
 
@@ -525,6 +549,8 @@ private:
       case vk::Result::eSuccess:
         break;
       case vk::Result::eSuboptimalKHR:
+      case vk::Result::eErrorOutOfDateKHR:
+        recreateSwapChain();
         std::cout << "vk::Queue::presentKHR returned vk::Result::eSuboptimalKHR !\n";
         break;
       default:
@@ -621,6 +647,7 @@ private:
 
   void cleanup()
   {
+    cleanupSwapChain();
     std::cout << "Entering cleanup" << std::endl;
     glfwDestroyWindow(window);
 
