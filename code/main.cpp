@@ -19,8 +19,34 @@ import vulkan_hpp;
 
 #include <cstdlib>
 #include <fstream>
+#include <glm/glm.hpp>
 #include <iostream>
 #include <stdexcept>
+
+struct Vertex
+{
+  glm::vec2 pos;
+  glm::vec3 color;
+
+  static vk::VertexInputBindingDescription getBindingDescription()
+  {
+    return { .binding = 0, .stride = sizeof(Vertex), .inputRate = vk::VertexInputRate::eVertex };
+  }
+  static std::array<vk::VertexInputAttributeDescription, 2> getAttributeDescriptions()
+  {
+    vk::VertexInputAttributeDescription posAttributeDesc = {
+      .location = 0, .binding = 0, .format = vk::Format::eR32G32Sfloat, .offset = offsetof(Vertex, pos)
+    };
+    decltype(posAttributeDesc) colorAttributeDesc = {
+      .location = 1, .binding = 0, .format = vk::Format::eR32G32B32Sfloat, .offset = offsetof(Vertex, color)
+    };
+    return { posAttributeDesc, colorAttributeDesc };
+  }
+};
+
+const std::vector<Vertex> vertices = { { { 0.0f, -0.5f }, { 1.0f, 0.0f, 0.0f } },
+                                       { { 0.5f, 0.5f }, { 0.0f, 1.0f, 0.0f } },
+                                       { { -0.5f, 0.5f }, { 0.0f, 0.0f, 1.0f } } };
 
 constexpr uint32_t WIDTH = 1920;
 constexpr uint32_t HEIGHT = 1080;
@@ -356,7 +382,15 @@ private:
 
     vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
     vk::PipelineInputAssemblyStateCreateInfo inputAssemblyInfo{ .topology = vk::PrimitiveTopology::eTriangleList };
-    vk::PipelineVertexInputStateCreateInfo vertexInputInfo{};
+
+    auto bindingDescription = Vertex::getBindingDescription();
+    auto attributeDescription = Vertex::getAttributeDescriptions();
+    vk::PipelineVertexInputStateCreateInfo vertexInputInfo{ .vertexBindingDescriptionCount = 1,
+                                                            .pVertexBindingDescriptions = &bindingDescription,
+                                                            .vertexAttributeDescriptionCount =
+                                                              attributeDescription.size(),
+                                                            .pVertexAttributeDescriptions =
+                                                              attributeDescription.data() };
 
     vk::PipelineDynamicStateCreateInfo dynamicState{ .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()),
                                                      .pDynamicStates = dynamicStates.data() };
