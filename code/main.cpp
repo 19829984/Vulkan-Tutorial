@@ -44,7 +44,7 @@ struct Vertex
   }
 };
 
-const std::vector<Vertex> vertices = { { { 0.0f, -0.5f }, { 1.0f, 0.0f, 0.0f } },
+const std::vector<Vertex> vertices = { { { 0.0f, -0.5f }, { 1.0f, 1.0f, 1.0f } },
                                        { { 0.5f, 0.5f }, { 0.0f, 1.0f, 0.0f } },
                                        { { -0.5f, 0.5f }, { 0.0f, 0.0f, 1.0f } } };
 
@@ -90,6 +90,7 @@ private:
     createGraphicsPipeline();
     createCommandPool();
     createCommandBuffers();
+    createVertexBuffer();
     createSyncObjects();
   }
 
@@ -455,6 +456,37 @@ private:
       vk::raii::Pipeline(device, VK_NULL_HANDLE, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
   }
 
+  void createVertexBuffer()
+  {
+    vk::BufferCreateInfo bufferInfo{ .size = sizeof(vertices[0]) * vertices.size(),
+                                     .usage = vk::BufferUsageFlagBits::eVertexBuffer,
+                                     .sharingMode = vk::SharingMode::eExclusive };
+    vertexBuffer = vk::raii::Buffer(device, bufferInfo);
+
+    vk::MemoryRequirements memRequirements = vertexBuffer.getMemoryRequirements();
+    vk::MemoryAllocateInfo memoryAllocateInfo = { .allocationSize = memRequirements.size,
+                                                  .memoryTypeIndex =
+                                                    findMemoryType(memRequirements.memoryTypeBits,
+                                                                   vk::MemoryPropertyFlagBits::eHostVisible |
+                                                                     vk::MemoryPropertyFlagBits::eHostCoherent) };
+    vertexBufferMemory = vk::raii::DeviceMemory(device, memoryAllocateInfo);
+    vertexBuffer.bindMemory(*vertexBufferMemory, 0);
+
+    void* data = vertexBufferMemory.mapMemory(0, bufferInfo.size);
+    memcpy(data, vertices.data(), bufferInfo.size);
+    vertexBufferMemory.unmapMemory();
+  }
+
+  uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties)
+  {
+    vk::PhysicalDeviceMemoryProperties memProperties = physicalDevice.getMemoryProperties();
+    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+      if ((typeFilter & (1 << i) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties)) {
+        return i;
+      }
+    }
+    throw std::runtime_error("Failed to find suitable memory type!");
+  }
   void createCommandPool()
   {
     vk::CommandPoolCreateInfo poolInfo{ .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
@@ -624,7 +656,10 @@ private:
       vk::Viewport(
         .0f, .0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), .0f, .1f));
     commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
-    commandBuffer.draw(3, 1, 0, 0);
+
+    commandBuffer.bindVertexBuffers(0, *vertexBuffer, { 0 });
+
+    commandBuffer.draw(vertices.size(), 1, 0, 0);
     commandBuffer.endRendering();
 
     transition_image_layout(imageIndex,
@@ -770,6 +805,9 @@ private:
   std::vector<vk::raii::Semaphore> presentCompleteSemaphores;
   std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
   std::vector<vk::raii::Fence> inFlightFences;
+
+  vk::raii::Buffer vertexBuffer = nullptr;
+  vk::raii::DeviceMemory vertexBufferMemory = nullptr;
 };
 
 int
