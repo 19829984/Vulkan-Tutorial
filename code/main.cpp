@@ -236,10 +236,30 @@ private:
         }
       }
     }
-    if ((graphicsFamilyIndex == numFamilyProperties) || (presentFamilyIndex == numFamilyProperties)) {
-      throw std::runtime_error("Could not find a queue for graphics or present");
+    transferFamilyIndex = numFamilyProperties;
+    uint32_t potentialTransferIndex = numFamilyProperties;
+    for (uint32_t qFamilyIndex = 0; qFamilyIndex < numFamilyProperties; ++qFamilyIndex) {
+      auto qfp = queueFamilyProperties[qFamilyIndex];
+      if (qfp.queueFlags & vk::QueueFlagBits::eTransfer) {
+        if ((qfp.queueFlags & vk::QueueFlagBits::eGraphics) == (vk::QueueFlagBits)0 &&
+            (qFamilyIndex != graphicsFamilyIndex && qFamilyIndex != presentFamilyIndex)) {
+          transferFamilyIndex = qFamilyIndex;
+          break;
+        }
+        potentialTransferIndex = qFamilyIndex;
+      }
     }
-
+    if (transferFamilyIndex == numFamilyProperties) {
+      transferFamilyIndex = potentialTransferIndex;
+    }
+    std::cout << "Num Family Properties: " << numFamilyProperties << std::endl;
+    std::cout << "Graphics Index: " << graphicsFamilyIndex << std::endl;
+    std::cout << "Present Index: " << presentFamilyIndex << std::endl;
+    std::cout << "Transfer Index: " << transferFamilyIndex << std::endl;
+    if ((graphicsFamilyIndex == numFamilyProperties) || (presentFamilyIndex == numFamilyProperties) ||
+        (transferFamilyIndex == numFamilyProperties)) {
+      throw std::runtime_error("Could not find a queue for graphics or present or transfer");
+    }
     float queuePriority = 0.5f;
     vk::DeviceQueueCreateInfo deviceQueueCreateInfo{ .queueFamilyIndex = graphicsFamilyIndex,
                                                      .queueCount = 1,
@@ -265,6 +285,7 @@ private:
 
     graphicsQueue = vk::raii::Queue(device, graphicsFamilyIndex, 0);
     presentQueue = vk::raii::Queue(device, presentFamilyIndex, 0);
+    transferQueue = vk::raii::Queue(device, transferFamilyIndex, 0);
   }
 
   uint32_t findQueueFamilies(vk::raii::PhysicalDevice physicalDevice)
@@ -458,23 +479,21 @@ private:
 
   void createVertexBuffer()
   {
-    vk::BufferCreateInfo bufferInfo{ .size = sizeof(vertices[0]) * vertices.size(),
-                                     .usage = vk::BufferUsageFlagBits::eVertexBuffer,
-                                     .sharingMode = vk::SharingMode::eExclusive };
-    vertexBuffer = vk::raii::Buffer(device, bufferInfo);
+    const vk::DeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
+    const vk::BufferUsageFlags usage = vk::BufferUsageFlagBits::eTransferSrc;
+    const vk::MemoryPropertyFlags properties =
+      vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
+    auto [stagingBuffer, stagingBufferMemory] = createBuffer(bufferSize, usage, properties);
 
-    vk::MemoryRequirements memRequirements = vertexBuffer.getMemoryRequirements();
-    vk::MemoryAllocateInfo memoryAllocateInfo = { .allocationSize = memRequirements.size,
-                                                  .memoryTypeIndex =
-                                                    findMemoryType(memRequirements.memoryTypeBits,
-                                                                   vk::MemoryPropertyFlagBits::eHostVisible |
-                                                                     vk::MemoryPropertyFlagBits::eHostCoherent) };
-    vertexBufferMemory = vk::raii::DeviceMemory(device, memoryAllocateInfo);
-    vertexBuffer.bindMemory(*vertexBufferMemory, 0);
+    void* data = stagingBufferMemory.mapMemory(0, bufferSize);
+    memcpy(data, vertices.data(), bufferSize);
+    stagingBufferMemory.unmapMemory();
 
-    void* data = vertexBufferMemory.mapMemory(0, bufferInfo.size);
-    memcpy(data, vertices.data(), bufferInfo.size);
-    vertexBufferMemory.unmapMemory();
+    std::tie(vertexBuffer, vertexBufferMemory) =
+      createBuffer(bufferSize,
+                   vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst,
+                   vk::MemoryPropertyFlagBits::eDeviceLocal);
+    copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
   }
 
   uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties)
@@ -489,17 +508,62 @@ private:
   }
   void createCommandPool()
   {
-    vk::CommandPoolCreateInfo poolInfo{ .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-                                        .queueFamilyIndex = graphicsFamilyIndex };
-    commandPool = vk::raii::CommandPool(device, poolInfo);
+    {
+      vk::CommandPoolCreateInfo poolInfo{ .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+                                          .queueFamilyIndex = graphicsFamilyIndex };
+      graphicCommandPool = vk::raii::CommandPool(device, poolInfo);
+    }
+
+    {
+      vk::CommandPoolCreateInfo poolInfo{ .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+                                          .queueFamilyIndex = transferFamilyIndex };
+      transferCommandPool = vk::raii::CommandPool(device, poolInfo);
+    }
   }
 
   void createCommandBuffers()
   {
-    vk::CommandBufferAllocateInfo allocInfo{ .commandPool = commandPool,
+    {
+      vk::CommandBufferAllocateInfo allocInfo{ .commandPool = graphicCommandPool,
+                                               .level = vk::CommandBufferLevel::ePrimary,
+                                               .commandBufferCount = MAX_FRAMES_IN_FLIGHT };
+      commandBuffers = vk::raii::CommandBuffers(device, allocInfo);
+    }
+    // {
+    //   vk::CommandBufferAllocateInfo allocInfo{ .commandPool = transferCommandPool,
+    //                                            .level = vk::CommandBufferLevel::ePrimary,
+    //                                            .commandBufferCount = MAX_FRAMES_IN_FLIGHT };
+    //   transferCommandBuffers = vk::raii::CommandBuffers(device, allocInfo);
+    // }
+  }
+
+  std::pair<vk::raii::Buffer, vk::raii::DeviceMemory> createBuffer(vk::DeviceSize size,
+                                                                   vk::BufferUsageFlags usage,
+                                                                   vk::MemoryPropertyFlags properties)
+  {
+    // Can't do concurrent on laptop with single gpu
+    vk::BufferCreateInfo bufferInfo{ .size = size, .usage = usage, .sharingMode = vk::SharingMode::eExclusive };
+    vk::raii::Buffer buffer = vk::raii::Buffer(device, bufferInfo);
+    vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
+    vk::MemoryAllocateInfo allocInfo{ .allocationSize = memRequirements.size,
+                                      .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties) };
+    vk::raii::DeviceMemory bufferMemory = vk::raii::DeviceMemory(device, allocInfo);
+    buffer.bindMemory(*bufferMemory, 0);
+    return { std::move(buffer), std::move(bufferMemory) };
+  }
+
+  void copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size)
+  {
+    vk::CommandBufferAllocateInfo allocInfo{ .commandPool = transferCommandPool,
                                              .level = vk::CommandBufferLevel::ePrimary,
-                                             .commandBufferCount = MAX_FRAMES_IN_FLIGHT };
-    commandBuffers = vk::raii::CommandBuffers(device, allocInfo);
+                                             .commandBufferCount = 1 };
+    vk::raii::CommandBuffer commandCopyBuffer = std::move(device.allocateCommandBuffers(allocInfo).front());
+    commandCopyBuffer.begin({ .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
+    commandCopyBuffer.copyBuffer(*srcBuffer, *dstBuffer, vk::BufferCopy(0, 0, size));
+    commandCopyBuffer.end();
+
+    transferQueue.submit(vk::SubmitInfo{ .commandBufferCount = 1, .pCommandBuffers = &*commandCopyBuffer }, nullptr);
+    transferQueue.waitIdle();
   }
 
   vk::SurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& availableFormats)
@@ -788,6 +852,7 @@ private:
   vk::raii::Device device = nullptr;
   vk::raii::Queue graphicsQueue = nullptr;
   vk::raii::Queue presentQueue = nullptr;
+  vk::raii::Queue transferQueue = nullptr;
   vk::raii::SwapchainKHR swapChain = nullptr;
   std::vector<vk::Image> swapChainImages;
   std::vector<vk::raii::ImageView> swapChainImageViews;
@@ -796,10 +861,13 @@ private:
   vk::Format swapChainImageFormat = vk::Format::eUndefined;
   uint32_t graphicsFamilyIndex = 0;
   uint32_t presentFamilyIndex = 0;
+  uint32_t transferFamilyIndex = 0;
   vk::raii::PipelineLayout pipelineLayout = nullptr;
   vk::raii::Pipeline graphicsPipeline = nullptr;
-  vk::raii::CommandPool commandPool = nullptr;
+  vk::raii::CommandPool graphicCommandPool = nullptr;
+  vk::raii::CommandPool transferCommandPool = nullptr;
   std::vector<vk::raii::CommandBuffer> commandBuffers;
+  // std::vector<vk::raii::CommandBuffer> transferCommandBuffers;
   uint32_t frameIndex = 0;
 
   std::vector<vk::raii::Semaphore> presentCompleteSemaphores;
