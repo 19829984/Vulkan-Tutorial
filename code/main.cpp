@@ -3,6 +3,9 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <glm/ext/matrix_clip_space.hpp>
+#include <glm/ext/matrix_transform.hpp>
+#include <glm/trigonometric.hpp>
 #include <iterator>
 #include <limits>
 #include <ostream>
@@ -17,9 +20,11 @@ import vulkan_hpp;
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
 #include <stdexcept>
 
@@ -44,9 +49,18 @@ struct Vertex
   }
 };
 
-const std::vector<Vertex> vertices = { { { 0.0f, -0.5f }, { 1.0f, 1.0f, 1.0f } },
-                                       { { 0.5f, 0.5f }, { 0.0f, 1.0f, 0.0f } },
-                                       { { -0.5f, 0.5f }, { 0.0f, 0.0f, 1.0f } } };
+const std::vector<Vertex> vertices = { { { -0.5f, -0.5f }, { 1.0f, 0.0f, 0.0f } },
+                                       { { 0.5f, -0.5f }, { 0.0f, 1.0f, 0.0f } },
+                                       { { 0.5f, 0.5f }, { 0.0f, 0.0f, 1.0f } },
+                                       { { -0.5f, 0.5f }, { 1.0f, 1.0f, 1.0f } } };
+const std::vector<uint16_t> indices = { 0, 1, 2, 2, 3, 0 };
+
+struct UniformBufferObject
+{
+  glm::mat4 model;
+  glm::mat4 view;
+  glm::mat4 proj;
+};
 
 constexpr uint32_t WIDTH = 1920;
 constexpr uint32_t HEIGHT = 1080;
@@ -87,10 +101,12 @@ private:
     pickPhysicalDevice();
     createLogicalDevice();
     recreateSwapChain();
+    createDescriptorLayout();
     createGraphicsPipeline();
     createCommandPool();
     createCommandBuffers();
     createVertexBuffer();
+    createIndexBuffer();
     createSyncObjects();
   }
 
@@ -389,6 +405,48 @@ private:
     }
   }
 
+  void createDescriptorLayout()
+  {
+    vk::DescriptorSetLayoutBinding uboLayoutBinding{ .binding = 0,
+                                                     .descriptorType = vk::DescriptorType::eUniformBuffer,
+                                                     .descriptorCount = 1,
+                                                     .stageFlags = vk::ShaderStageFlagBits::eVertex };
+    vk::DescriptorSetLayoutCreateInfo layoutInfo{ .bindingCount = 1, .pBindings = &uboLayoutBinding };
+    descriptorLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
+  }
+
+  void createUniformBuffers()
+  {
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+      vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
+      auto [buffer, bufferMem] =
+        createBuffer(bufferSize,
+                     vk::BufferUsageFlagBits::eUniformBuffer,
+                     vk::MemoryPropertyFlagBits::eHostCoherent | vk::MemoryPropertyFlagBits::eHostVisible);
+      uniformBuffers.emplace_back(std::move(buffer));
+      uniformBufferMemory.emplace_back(std::move(bufferMem));
+      uniformBufferMapped.emplace_back(uniformBufferMemory.back().mapMemory(0, bufferSize));
+    }
+  }
+
+  void updateUniformBuffer(uint32_t currentImage)
+  {
+    static auto startTime = std::chrono::high_resolution_clock::now();
+    auto currentTime = std::chrono::high_resolution_clock::now();
+    auto time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime);
+
+    UniformBufferObject ubo{};
+
+    ubo.model = glm::rotate(glm::mat4(1.0), time.count() * glm::radians(90.f), glm::vec3(0.0, 0.0, 0.1));
+    ubo.view = glm::lookAt(glm::vec3(2.f, 2.f, 2.f), glm::vec3(0, 0, 0), glm::vec3(0, 0, 1));
+    ubo.proj = glm::perspective(glm::radians(45.f),
+                                static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height),
+                                0.1f,
+                                100.f);
+    ubo.proj[1][1] *= -1; // OpenGL Y inversion compensation
+    memcpy(uniformBufferMapped[currentImage], &ubo, sizeof(ubo));
+  }
+
   void createGraphicsPipeline()
   {
     auto shaderModule = createShaderModule(readFile("shaders/slang.spv"));
@@ -453,7 +511,9 @@ private:
                                                              .attachmentCount = 1,
                                                              .pAttachments = &colorBlendAttachment };
 
-    vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ .setLayoutCount = 0, .pushConstantRangeCount = 0 };
+    vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ .setLayoutCount = 1,
+                                                     .pSetLayouts = &*descriptorLayout,
+                                                     .pushConstantRangeCount = 1 };
 
     pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
 
@@ -494,6 +554,24 @@ private:
                    vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst,
                    vk::MemoryPropertyFlagBits::eDeviceLocal);
     copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+  }
+  void createIndexBuffer()
+  {
+    const vk::DeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+    const vk::BufferUsageFlags usage = vk::BufferUsageFlagBits::eTransferSrc;
+    const vk::MemoryPropertyFlags properties =
+      vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
+    auto [stagingBuffer, stagingBufferMemory] = createBuffer(bufferSize, usage, properties);
+
+    void* data = stagingBufferMemory.mapMemory(0, bufferSize);
+    memcpy(data, indices.data(), bufferSize);
+    stagingBufferMemory.unmapMemory();
+
+    std::tie(indexBuffer, indexBufferMemory) =
+      createBuffer(bufferSize,
+                   vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst,
+                   vk::MemoryPropertyFlagBits::eDeviceLocal);
+    copyBuffer(stagingBuffer, indexBuffer, bufferSize);
   }
 
   uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties)
@@ -656,6 +734,8 @@ private:
     commandBuffer.reset();
     recordCommandBuffer(imageIndex);
 
+    updateUniformBuffer(imageIndex);
+
     // Submit to graphics queue
     auto& renderFinishedSemaphore = *renderFinishedSemaphores[imageIndex];
     vk::PipelineStageFlags waitDestinationStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
@@ -722,8 +802,9 @@ private:
     commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
 
     commandBuffer.bindVertexBuffers(0, *vertexBuffer, { 0 });
+    commandBuffer.bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint16);
 
-    commandBuffer.draw(vertices.size(), 1, 0, 0);
+    commandBuffer.drawIndexed(static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
     commandBuffer.endRendering();
 
     transition_image_layout(imageIndex,
@@ -876,6 +957,14 @@ private:
 
   vk::raii::Buffer vertexBuffer = nullptr;
   vk::raii::DeviceMemory vertexBufferMemory = nullptr;
+  vk::raii::Buffer indexBuffer = nullptr;
+  vk::raii::DeviceMemory indexBufferMemory = nullptr;
+
+  vk::raii::DescriptorSetLayout descriptorLayout = nullptr;
+
+  std::vector<vk::raii::Buffer> uniformBuffers;
+  std::vector<vk::raii::DeviceMemory> uniformBufferMemory;
+  std::vector<void*> uniformBufferMapped;
 };
 
 int

@@ -10,12 +10,24 @@ struct VSOutput
   float3 color;
 };
 
+struct UniformBuffer
+{
+  float4x4 model;
+  float4x4 view;
+  float4x4 proj;
+};
+ConstantBuffer<UniformBuffer> ubo;
+
 [shader("vertex")]
 VSOutput
 vertMain(VSInput input)
 {
   VSOutput output;
-  output.pos = float4(input.inPosition, 0.0, 1.0);
+  float4 pos = float4(input.inPosition, 0.0, 1.0);
+  pos = mul(ubo.model, pos);
+  pos = mul(ubo.view, pos);
+  pos = mul(ubo.proj, pos);
+  output.pos = pos;
   output.color = input.inColor;
   return output;
 }
