@@ -107,6 +107,9 @@ private:
     createCommandBuffers();
     createVertexBuffer();
     createIndexBuffer();
+    createUniformBuffers();
+    createDescriptorPool();
+    createDescriptorSets();
     createSyncObjects();
   }
 
@@ -395,7 +398,6 @@ private:
   void createImageViews()
   {
     swapChainImageViews.clear();
-
     vk::ImageViewCreateInfo imageViewCreateInfo{ .viewType = vk::ImageViewType::e2D,
                                                  .format = swapChainImageFormat,
                                                  .subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 } };
@@ -412,12 +414,13 @@ private:
                                                      .descriptorCount = 1,
                                                      .stageFlags = vk::ShaderStageFlagBits::eVertex };
     vk::DescriptorSetLayoutCreateInfo layoutInfo{ .bindingCount = 1, .pBindings = &uboLayoutBinding };
-    descriptorLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
+    descriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
   }
 
   void createUniformBuffers()
   {
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+      std::cout << "Creating unifrom buffer for  frame" << i << std::endl;
       vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
       auto [buffer, bufferMem] =
         createBuffer(bufferSize,
@@ -426,6 +429,38 @@ private:
       uniformBuffers.emplace_back(std::move(buffer));
       uniformBufferMemory.emplace_back(std::move(bufferMem));
       uniformBufferMapped.emplace_back(uniformBufferMemory.back().mapMemory(0, bufferSize));
+    }
+  }
+
+  void createDescriptorPool()
+  {
+    vk::DescriptorPoolSize poolSize{ .type = vk::DescriptorType::eUniformBuffer,
+                                     .descriptorCount = MAX_FRAMES_IN_FLIGHT };
+    vk::DescriptorPoolCreateInfo poolInfo{ .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+                                           .maxSets = MAX_FRAMES_IN_FLIGHT,
+                                           .poolSizeCount = 1,
+                                           .pPoolSizes = &poolSize };
+    descriptorPool = vk::raii::DescriptorPool(device, poolInfo);
+  }
+
+  void createDescriptorSets()
+  {
+    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *descriptorSetLayout);
+    vk::DescriptorSetAllocateInfo allocInfo{ .descriptorPool = descriptorPool,
+                                             .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
+                                             .pSetLayouts = layouts.data() };
+    descriptorSets = device.allocateDescriptorSets(allocInfo);
+    for (size_t i = 0; i < layouts.size(); ++i) {
+      vk::DescriptorBufferInfo bufferInfo{ .buffer = uniformBuffers[i],
+                                           .offset = 0,
+                                           .range = sizeof(UniformBufferObject) };
+      vk::WriteDescriptorSet descriptorWrite{ .dstSet = descriptorSets[i],
+                                              .dstBinding = 0,
+                                              .dstArrayElement = 0,
+                                              .descriptorCount = 1,
+                                              .descriptorType = vk::DescriptorType::eUniformBuffer,
+                                              .pBufferInfo = &bufferInfo };
+      device.updateDescriptorSets(descriptorWrite, {});
     }
   }
 
@@ -493,7 +528,7 @@ private:
                                                              .rasterizerDiscardEnable = vk::False,
                                                              .polygonMode = vk::PolygonMode::eFill,
                                                              .cullMode = vk::CullModeFlagBits::eBack,
-                                                             .frontFace = vk::FrontFace::eClockwise,
+                                                             .frontFace = vk::FrontFace::eCounterClockwise,
                                                              .depthBiasEnable = vk::False,
                                                              .depthBiasSlopeFactor = 1.0f,
                                                              .lineWidth = 1.0f };
@@ -512,8 +547,8 @@ private:
                                                              .pAttachments = &colorBlendAttachment };
 
     vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ .setLayoutCount = 1,
-                                                     .pSetLayouts = &*descriptorLayout,
-                                                     .pushConstantRangeCount = 1 };
+                                                     .pSetLayouts = &*descriptorSetLayout,
+                                                     .pushConstantRangeCount = 0 };
 
     pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
 
@@ -733,8 +768,7 @@ private:
     device.resetFences(fence);
     commandBuffer.reset();
     recordCommandBuffer(imageIndex);
-
-    updateUniformBuffer(imageIndex);
+    updateUniformBuffer(frameIndex);
 
     // Submit to graphics queue
     auto& renderFinishedSemaphore = *renderFinishedSemaphores[imageIndex];
@@ -804,6 +838,8 @@ private:
     commandBuffer.bindVertexBuffers(0, *vertexBuffer, { 0 });
     commandBuffer.bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint16);
 
+    commandBuffer.bindDescriptorSets(
+      vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *descriptorSets[frameIndex], nullptr);
     commandBuffer.drawIndexed(static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
     commandBuffer.endRendering();
 
@@ -960,7 +996,9 @@ private:
   vk::raii::Buffer indexBuffer = nullptr;
   vk::raii::DeviceMemory indexBufferMemory = nullptr;
 
-  vk::raii::DescriptorSetLayout descriptorLayout = nullptr;
+  vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
+  vk::raii::DescriptorPool descriptorPool = nullptr;
+  std::vector<vk::raii::DescriptorSet> descriptorSets;
 
   std::vector<vk::raii::Buffer> uniformBuffers;
   std::vector<vk::raii::DeviceMemory> uniformBufferMemory;
