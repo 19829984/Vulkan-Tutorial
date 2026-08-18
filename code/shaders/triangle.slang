@@ -2,12 +2,14 @@ struct VSInput
 {
   float2 inPosition;
   float3 inColor;
+  float2 inTexCoord;
 };
 
 struct VSOutput
 {
   float4 pos : SV_Position;
-  float3 color;
+  float3 fragColor;
+  float2 fragTexCoord;
 };
 
 struct UniformBuffer
@@ -28,15 +30,16 @@ vertMain(VSInput input)
   pos = mul(ubo.view, pos);
   pos = mul(ubo.proj, pos);
   output.pos = pos;
-  output.color = input.inColor;
+  output.fragColor = input.inColor;
+  output.fragTexCoord = input.inTexCoord;
   return output;
 }
 
+Sampler2D texture;
 [shader("fragment")]
 float4
 fragMain(VSOutput inVert)
   : SV_Target
 {
-  float3 color = inVert.color;
-  return float4(color, 1.0);
+  return texture.Sample(inVert.fragTexCoord);
 }
