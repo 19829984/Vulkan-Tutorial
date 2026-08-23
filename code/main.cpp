@@ -51,17 +51,17 @@ struct Vertex
     };
   }
 };
-const std::vector<Vertex> vertices = { { { -0.5f, -0.5f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f } },
-                                       { { 0.5f, -0.5f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 1.0f, 0.0f } },
-                                       { { 0.5f, 0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 1.0f } },
-                                       { { -0.5f, 0.5f, 0.0f }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 1.0f } },
+const std::vector<Vertex> vertices = { { { -0.5f, -0.5f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 1.0f, 0.0f } },
+                                       { { 0.5f, -0.5f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f } },
+                                       { { 0.5f, 0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 1.0f } },
+                                       { { -0.5f, 0.5f, 0.0f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f } },
 
                                        { { -0.5f, -0.5f, -0.5f }, { 1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f } },
                                        { { 0.5f, -0.5f, -0.5f }, { 0.0f, 1.0f, 0.0f }, { 1.0f, 0.0f } },
                                        { { 0.5f, 0.5f, -0.5f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 1.0f } },
                                        { { -0.5f, 0.5f, -0.5f }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 1.0f } } };
-
 const std::vector<uint16_t> indices = { 0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4 };
+
 struct UniformBufferObject
 {
   glm::mat4 model;
@@ -111,6 +111,7 @@ private:
     createDescriptorLayout();
     createGraphicsPipeline();
     createCommandPool();
+    createDepthResources();
     createTextureImage();
     createTextureImageView();
     createTextureSampler();
@@ -295,9 +296,6 @@ private:
                                                      .queueCount = 1,
                                                      .pQueuePriorities = &queuePriority };
 
-    vk::DeviceQueueCreateInfo deviceTransferQueueCreateInfo{ .queueFamilyIndex = transferFamilyIndex,
-                                                             .queueCount = 1,
-                                                             .pQueuePriorities = &queuePriority };
     vk::StructureChain<vk::PhysicalDeviceFeatures2,
                        vk::PhysicalDeviceVulkan13Features,
                        vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
@@ -306,15 +304,24 @@ private:
                     { .synchronization2 = true, .dynamicRendering = true },
                     { .extendedDynamicState = true },
                     { .shaderDrawParameters = true } };
-
-    vk::DeviceQueueCreateInfo queueCreateInfos[] = { deviceQueueCreateInfo, deviceTransferQueueCreateInfo };
-
-    vk::DeviceCreateInfo deviceCreateInfo{ .pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>(),
-                                           .queueCreateInfoCount = 2,
-                                           .pQueueCreateInfos = queueCreateInfos,
-                                           .enabledExtensionCount =
-                                             static_cast<uint32_t>(requiredDeviceExtensions.size()),
-                                           .ppEnabledExtensionNames = requiredDeviceExtensions.data() };
+    vk::DeviceCreateInfo deviceCreateInfo;
+    if (transferFamilyIndex != graphicsFamilyIndex) {
+      vk::DeviceQueueCreateInfo deviceTransferQueueCreateInfo{ .queueFamilyIndex = transferFamilyIndex,
+                                                               .queueCount = 1,
+                                                               .pQueuePriorities = &queuePriority };
+      vk::DeviceQueueCreateInfo queueCreateInfos[] = { deviceQueueCreateInfo, deviceTransferQueueCreateInfo };
+      deviceCreateInfo = { .pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>(),
+                           .queueCreateInfoCount = 2,
+                           .pQueueCreateInfos = queueCreateInfos,
+                           .enabledExtensionCount = static_cast<uint32_t>(requiredDeviceExtensions.size()),
+                           .ppEnabledExtensionNames = requiredDeviceExtensions.data() };
+    } else {
+      deviceCreateInfo = { .pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>(),
+                           .queueCreateInfoCount = 1,
+                           .pQueueCreateInfos = &deviceQueueCreateInfo,
+                           .enabledExtensionCount = static_cast<uint32_t>(requiredDeviceExtensions.size()),
+                           .ppEnabledExtensionNames = requiredDeviceExtensions.data() };
+    }
 
     device = vk::raii::Device(physicalDevice, deviceCreateInfo);
 
@@ -411,12 +418,12 @@ private:
     createImageViews();
   }
 
-  vk::raii::ImageView createImageView(const vk::Image& image, vk::Format format)
+  vk::raii::ImageView createImageView(const vk::Image& image, vk::Format format, vk::ImageAspectFlagBits aspectMask)
   {
     vk::ImageViewCreateInfo createInfo{ .image = image,
                                         .viewType = vk::ImageViewType::e2D,
                                         .format = format,
-                                        .subresourceRange = { .aspectMask = vk::ImageAspectFlagBits::eColor,
+                                        .subresourceRange = { .aspectMask = aspectMask,
                                                               .baseMipLevel = 0,
                                                               .levelCount = 1,
                                                               .baseArrayLayer = 0,
@@ -429,7 +436,7 @@ private:
     assert(swapChainImageViews.empty());
     swapChainImageViews.reserve(swapChainImages.size());
     for (auto& image : swapChainImages) {
-      swapChainImageViews.emplace_back(createImageView(image, swapChainImageFormat));
+      swapChainImageViews.emplace_back(createImageView(image, swapChainImageFormat, vk::ImageAspectFlagBits::eColor));
     }
   }
 
@@ -774,7 +781,10 @@ private:
       commandBuffer, textureImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
     endSingleTimeCommands(graphicsQueue, std::move(commandBuffer));
   }
-  void createTextureImageView() { textureImageView = createImageView(*textureImage, vk::Format::eR8G8B8A8Srgb); }
+  void createTextureImageView()
+  {
+    textureImageView = createImageView(*textureImage, vk::Format::eR8G8B8A8Srgb, vk::ImageAspectFlagBits::eColor);
+  }
   void createTextureSampler()
   {
     vk::PhysicalDeviceProperties properties = physicalDevice.getProperties();
@@ -823,6 +833,38 @@ private:
     image.bindMemory(imageMemory, 0);
 
     return { std::move(image), std::move(imageMemory) };
+  }
+
+  void createDepthResources()
+  {
+    const auto format = findDepthFormat();
+    std::tie(depthImage, depthImageMemory) = createImage(swapChainExtent.width,
+                                                         swapChainExtent.height,
+                                                         format,
+                                                         vk::ImageTiling::eOptimal,
+                                                         vk::ImageUsageFlagBits::eDepthStencilAttachment,
+                                                         vk::MemoryPropertyFlagBits::eDeviceLocal);
+    depthImageView = createImageView(*depthImage, format, vk::ImageAspectFlagBits::eDepth);
+  }
+  vk::Format findDepthFormat()
+  {
+    return findSupportedFormat({ vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint },
+                               vk::ImageTiling::eOptimal,
+                               vk::FormatFeatureFlagBits::eDepthStencilAttachment);
+  }
+  vk::Format findSupportedFormat(const std::vector<vk::Format>& candidates,
+                                 vk::ImageTiling tiling,
+                                 vk::FormatFeatureFlags features)
+  {
+    for (const auto& format : candidates) {
+      vk::FormatProperties props = physicalDevice.getFormatProperties(format);
+
+      if (((tiling == vk::ImageTiling::eLinear) && ((props.linearTilingFeatures & features))) ||
+          ((tiling == vk::ImageTiling::eOptimal) && ((props.optimalTilingFeatures & features)))) {
+        return format;
+      }
+    }
+    throw std::runtime_error("failed to find supported format!");
   }
   void copyBufferToImage(vk::raii::CommandBuffer& commandBuffer,
                          vk::raii::Buffer& srcBuffer,
@@ -981,15 +1023,22 @@ private:
                             vk::PipelineStageFlagBits2::eColorAttachmentOutput);
 
     vk::ClearValue clearColor = vk::ClearColorValue(.0f, .0f, .0f, .1f);
-    vk::RenderingAttachmentInfo attachmentInfo = { .imageView = swapChainImageViews[imageIndex],
-                                                   .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                                                   .loadOp = vk::AttachmentLoadOp::eClear,
-                                                   .storeOp = vk::AttachmentStoreOp::eStore,
-                                                   .clearValue = clearColor };
+    vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1.0, 0);
+    vk::RenderingAttachmentInfo colorAttachmentInfo = { .imageView = swapChainImageViews[imageIndex],
+                                                        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                                                        .loadOp = vk::AttachmentLoadOp::eClear,
+                                                        .storeOp = vk::AttachmentStoreOp::eStore,
+                                                        .clearValue = clearColor };
+    vk::RenderingAttachmentInfo depthAttachmentInfo = { .imageView = depthImageView,
+                                                        .imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
+                                                        .loadOp = vk::AttachmentLoadOp::eClear,
+                                                        .storeOp = vk::AttachmentStoreOp::eDontCare,
+                                                        .clearValue = clearDepth };
     vk::RenderingInfo renderingInfo = { .renderArea = { .offset = { 0, 0 }, .extent = swapChainExtent },
                                         .layerCount = 1,
                                         .colorAttachmentCount = 1,
-                                        .pColorAttachments = &attachmentInfo };
+                                        .pColorAttachments = &colorAttachmentInfo,
+                                        .pDepthAttachment = &depthAttachmentInfo };
     commandBuffer.beginRendering(renderingInfo);
     commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
     commandBuffer.setViewport(
@@ -1205,6 +1254,10 @@ private:
   vk::raii::DeviceMemory textureImageMemory = nullptr;
   vk::raii::ImageView textureImageView = nullptr;
   vk::raii::Sampler textureSampler = nullptr;
+
+  vk::raii::Image depthImage = nullptr;
+  vk::raii::DeviceMemory depthImageMemory = nullptr;
+  vk::raii::ImageView depthImageView = nullptr;
 };
 
 int
