@@ -1,6 +1,6 @@
 struct VSInput
 {
-  float2 inPosition;
+  float3 inPosition;
   float3 inColor;
   float2 inTexCoord;
 };
@@ -25,7 +25,7 @@ VSOutput
 vertMain(VSInput input)
 {
   VSOutput output;
-  float4 pos = float4(input.inPosition, 0.0, 1.0);
+  float4 pos = float4(input.inPosition, 1.0);
   pos = mul(ubo.model, pos);
   pos = mul(ubo.view, pos);
   pos = mul(ubo.proj, pos);

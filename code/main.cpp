@@ -25,6 +25,7 @@ import vulkan_hpp;
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
@@ -32,7 +33,7 @@ import vulkan_hpp;
 
 struct Vertex
 {
-  glm::vec2 pos;
+  glm::vec3 pos;
   glm::vec3 color;
   glm::vec2 texCoord;
 
@@ -44,18 +45,23 @@ struct Vertex
   static std::array<vk::VertexInputAttributeDescription, 3> getAttributeDescriptions()
   {
     return {
-      { { .location = 0, .binding = 0, .format = vk::Format::eR32G32Sfloat, .offset = offsetof(Vertex, pos) },
+      { { .location = 0, .binding = 0, .format = vk::Format::eR32G32B32Sfloat, .offset = offsetof(Vertex, pos) },
         { .location = 1, .binding = 0, .format = vk::Format::eR32G32B32Sfloat, .offset = offsetof(Vertex, color) },
         { .location = 2, .binding = 0, .format = vk::Format::eR32G32Sfloat, .offset = offsetof(Vertex, texCoord) } }
     };
   }
 };
-const std::vector<Vertex> vertices = { { { -0.5f, -0.5f }, { 1.0f, 0.0f, 0.0f }, { 1.0f, 0.0f } },
-                                       { { 0.5f, -0.5f }, { 0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f } },
-                                       { { 0.5f, 0.5f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 1.0f } },
-                                       { { -0.5f, 0.5f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f } } };
-const std::vector<uint16_t> indices = { 0, 1, 2, 2, 3, 0 };
+const std::vector<Vertex> vertices = { { { -0.5f, -0.5f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f } },
+                                       { { 0.5f, -0.5f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 1.0f, 0.0f } },
+                                       { { 0.5f, 0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 1.0f } },
+                                       { { -0.5f, 0.5f, 0.0f }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 1.0f } },
 
+                                       { { -0.5f, -0.5f, -0.5f }, { 1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f } },
+                                       { { 0.5f, -0.5f, -0.5f }, { 0.0f, 1.0f, 0.0f }, { 1.0f, 0.0f } },
+                                       { { 0.5f, 0.5f, -0.5f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 1.0f } },
+                                       { { -0.5f, 0.5f, -0.5f }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 1.0f } } };
+
+const std::vector<uint16_t> indices = { 0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4 };
 struct UniformBufferObject
 {
   glm::mat4 model;
@@ -289,6 +295,9 @@ private:
                                                      .queueCount = 1,
                                                      .pQueuePriorities = &queuePriority };
 
+    vk::DeviceQueueCreateInfo deviceTransferQueueCreateInfo{ .queueFamilyIndex = transferFamilyIndex,
+                                                             .queueCount = 1,
+                                                             .pQueuePriorities = &queuePriority };
     vk::StructureChain<vk::PhysicalDeviceFeatures2,
                        vk::PhysicalDeviceVulkan13Features,
                        vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
@@ -298,9 +307,11 @@ private:
                     { .extendedDynamicState = true },
                     { .shaderDrawParameters = true } };
 
+    vk::DeviceQueueCreateInfo queueCreateInfos[] = { deviceQueueCreateInfo, deviceTransferQueueCreateInfo };
+
     vk::DeviceCreateInfo deviceCreateInfo{ .pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>(),
-                                           .queueCreateInfoCount = 1,
-                                           .pQueueCreateInfos = &deviceQueueCreateInfo,
+                                           .queueCreateInfoCount = 2,
+                                           .pQueueCreateInfos = queueCreateInfos,
                                            .enabledExtensionCount =
                                              static_cast<uint32_t>(requiredDeviceExtensions.size()),
                                            .ppEnabledExtensionNames = requiredDeviceExtensions.data() };
@@ -698,9 +709,9 @@ private:
     return { std::move(buffer), std::move(bufferMemory) };
   }
 
-  vk::raii::CommandBuffer beginSingleTimeCommands()
+  vk::raii::CommandBuffer beginSingleTimeCommands(vk::raii::CommandPool& commandPool)
   {
-    vk::CommandBufferAllocateInfo allocInfo{ .commandPool = transferCommandPool,
+    vk::CommandBufferAllocateInfo allocInfo{ .commandPool = commandPool,
                                              .level = vk::CommandBufferLevel::ePrimary,
                                              .commandBufferCount = 1 };
     vk::raii::CommandBuffer commandBuffer = std::move(device.allocateCommandBuffers(allocInfo).front());
@@ -710,19 +721,19 @@ private:
     return std::move(commandBuffer);
   }
 
-  void endSingleTimeCommands(vk::raii::CommandBuffer&& commandBuffer)
+  void endSingleTimeCommands(vk::raii::Queue queue, vk::raii::CommandBuffer&& commandBuffer)
   {
     commandBuffer.end();
     auto submitInfo = vk::SubmitInfo{ .commandBufferCount = 1, .pCommandBuffers = &*commandBuffer };
-    graphicsQueue.submit(submitInfo, nullptr);
-    graphicsQueue.waitIdle();
+    queue.submit(submitInfo, nullptr);
+    queue.waitIdle();
   }
 
   void copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size)
   {
-    auto commandCopyBuffer = beginSingleTimeCommands();
+    auto commandCopyBuffer = beginSingleTimeCommands(transferCommandPool);
     commandCopyBuffer.copyBuffer(*srcBuffer, *dstBuffer, vk::BufferCopy(0, 0, size));
-    endSingleTimeCommands(std::move(commandCopyBuffer));
+    endSingleTimeCommands(transferQueue, std::move(commandCopyBuffer));
   }
 
   void createTextureImage()
@@ -754,13 +765,14 @@ private:
                   vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
                   vk::MemoryPropertyFlagBits::eDeviceLocal);
 
-    auto commandBuffer = beginSingleTimeCommands();
+    auto commandBuffer = beginSingleTimeCommands(graphicCommandPool);
     transitionImageLayout(
       commandBuffer, textureImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
     copyBufferToImage(commandBuffer, stagingBuffer, textureImage, texWidth, texHeight);
+
     transitionImageLayout(
       commandBuffer, textureImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-    endSingleTimeCommands(std::move(commandBuffer));
+    endSingleTimeCommands(graphicsQueue, std::move(commandBuffer));
   }
   void createTextureImageView() { textureImageView = createImageView(*textureImage, vk::Format::eR8G8B8A8Srgb); }
   void createTextureSampler()
