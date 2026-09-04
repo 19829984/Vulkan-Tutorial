@@ -3,13 +3,16 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#define GLM_ENABLE_EXPERIMENTAL
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/matrix_transform.hpp>
+#include <glm/gtx/hash.hpp>
 #include <glm/trigonometric.hpp>
 #include <iterator>
 #include <limits>
 #include <ostream>
 #include <sys/types.h>
+#include <unordered_map>
 #include <vector>
 #include <vulkan/vulkan_core.h>
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
@@ -39,6 +42,11 @@ struct Vertex
   glm::vec3 color;
   glm::vec2 texCoord;
 
+  bool operator==(const Vertex& other) const
+  {
+    return pos == other.pos && color == other.color && texCoord == other.texCoord;
+  }
+
   static vk::VertexInputBindingDescription getBindingDescription()
   {
     return { 0, sizeof(Vertex), vk::VertexInputRate::eVertex };
@@ -53,7 +61,17 @@ struct Vertex
     };
   }
 };
-
+namespace std {
+template<>
+struct hash<Vertex>
+{
+  size_t operator()(Vertex const& vertex) const
+  {
+    return ((hash<glm::vec3>()(vertex.pos) ^ (hash<glm::vec3>()(vertex.color) << 1)) >> 1) ^
+           (hash<glm::vec2>()(vertex.texCoord) << 1);
+  }
+};
+}
 struct UniformBufferObject
 {
   glm::mat4 model;
@@ -64,7 +82,7 @@ struct UniformBufferObject
 constexpr uint32_t WIDTH = 1920;
 constexpr uint32_t HEIGHT = 1080;
 const std::string MODEL_PATH = "models/viking_room.obj";
-const std::string TEXTURE_PATH = "models/viking_room.png";
+const std::string TEXTURE_PATH = "textures/viking_room.png";
 
 const std::vector<char const*> validationLayers = { "VK_LAYER_KHRONOS_validation" };
 #ifdef NDEBUG
@@ -645,6 +663,8 @@ private:
       throw std::runtime_error(warn + err);
     }
 
+    std::unordered_map<Vertex, uint32_t> uniqueVertices{};
+
     for (const auto& shape : shapes) {
       for (const auto& index : shape.mesh.indices) {
         Vertex vertex{};
@@ -655,11 +675,14 @@ private:
         };
         vertex.texCoord = {
           attrib.texcoords[2 * index.texcoord_index + 0],
-          attrib.texcoords[2 * index.texcoord_index + 1],
+          1 - attrib.texcoords[2 * index.texcoord_index + 1],
         };
         vertex.color = { 1, 1, 1 };
-        vertices.push_back(vertex);
-        indices.push_back(indices.size());
+        auto [it, inserted] = uniqueVertices.insert({ vertex, static_cast<uint32_t>(vertices.size()) });
+        if (inserted) {
+          vertices.emplace_back(std::move(vertex));
+        }
+        indices.push_back(it->second);
       }
     }
   }
