@@ -815,7 +815,7 @@ private:
   {
     int texWidth, texHeight, texChannels;
     stbi_uc* pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
-    mipLevels = static_cast<uint32_t>(glm::floor(glm::log2(glm::max(texWidth, texHeight))) + 1);
+    mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(texWidth, texHeight))) + 1);
     vk::DeviceSize imageSize = texWidth * texHeight * 4;
 
     if (!pixels) {
@@ -833,31 +833,101 @@ private:
 
     stbi_image_free(pixels);
 
-    std::tie(textureImage, textureImageMemory) =
-      createImage(texWidth,
-                  texHeight,
-                  mipLevels,
-                  vk::Format::eR8G8B8A8Srgb,
-                  vk::ImageTiling::eOptimal,
-                  vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
-                  vk::MemoryPropertyFlagBits::eDeviceLocal);
+    std::tie(textureImage, textureImageMemory) = createImage(
+      texWidth,
+      texHeight,
+      mipLevels,
+      vk::Format::eR8G8B8A8Srgb,
+      vk::ImageTiling::eOptimal,
+      vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+      vk::MemoryPropertyFlagBits::eDeviceLocal);
 
     auto commandBuffer = beginSingleTimeCommands(graphicCommandPool);
     transitionImageLayout(
       commandBuffer, textureImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, mipLevels);
     copyBufferToImage(commandBuffer, stagingBuffer, textureImage, texWidth, texHeight);
 
-    transitionImageLayout(commandBuffer,
-                          textureImage,
-                          vk::ImageLayout::eTransferDstOptimal,
-                          vk::ImageLayout::eShaderReadOnlyOptimal,
-                          mipLevels);
+    generateMipMaps(commandBuffer, textureImage, vk::Format::eR8G8B8A8Srgb, texWidth, texHeight, mipLevels);
     endSingleTimeCommands(graphicsQueue, std::move(commandBuffer));
   }
   void createTextureImageView()
   {
     textureImageView =
       createImageView(*textureImage, vk::Format::eR8G8B8A8Srgb, vk::ImageAspectFlagBits::eColor, mipLevels);
+  }
+  void generateMipMaps(vk::raii::CommandBuffer& commandBuffer,
+                       vk::raii::Image& image,
+                       vk::Format format,
+                       int32_t texWidth,
+                       int32_t texHeight,
+                       uint32_t mipLevels)
+  {
+    auto formatProperties = physicalDevice.getFormatProperties(format);
+
+    if (!(formatProperties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eSampledImageFilterLinear)) {
+      throw std::runtime_error("texture image format does not support linear blitting!");
+    }
+
+    vk::ImageMemoryBarrier barrier = {
+      .srcAccessMask = vk::AccessFlagBits::eTransferWrite,
+      .dstAccessMask = vk::AccessFlagBits::eTransferRead,
+      .oldLayout = vk::ImageLayout::eTransferDstOptimal,
+      .newLayout = vk::ImageLayout::eTransferSrcOptimal,
+      .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+      .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+      .image = image,
+      .subresourceRange = { .aspectMask = vk::ImageAspectFlagBits::eColor, .levelCount = 1, .layerCount = 1 }
+    };
+
+    int32_t mipWidth = texWidth;
+    int32_t mipHeight = texHeight;
+
+    for (uint32_t i = 1; i < mipLevels; ++i) {
+      barrier.subresourceRange.baseMipLevel = i - 1;
+      barrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
+      barrier.newLayout = vk::ImageLayout::eTransferSrcOptimal;
+      barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+      barrier.dstAccessMask = vk::AccessFlagBits::eTransferRead;
+
+      commandBuffer.pipelineBarrier(
+        vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eTransfer, {}, {}, {}, barrier);
+
+      int32_t newMipWidth = 1 < mipWidth ? mipWidth / 2 : 1;
+      int32_t newMipHeight = 1 < mipHeight ? mipHeight / 2 : 1;
+      vk::ImageBlit blit = {
+        .srcSubresource = { .aspectMask = vk::ImageAspectFlagBits::eColor, .mipLevel = i - 1, .layerCount = 1 },
+        .srcOffsets = std::array<vk::Offset3D, 2>({ {}, { mipWidth, mipHeight, 1 } }),
+        .dstSubresource = { .aspectMask = vk::ImageAspectFlagBits::eColor, .mipLevel = i, .layerCount = 1 },
+        .dstOffsets = std::array<vk::Offset3D, 2>({ {}, { newMipWidth, 1 < mipHeight ? mipHeight / 2 : 1, 1 } }),
+      };
+
+      commandBuffer.blitImage(image,
+                              vk::ImageLayout::eTransferSrcOptimal,
+                              image,
+                              vk::ImageLayout::eTransferDstOptimal,
+                              blit,
+                              vk::Filter::eLinear);
+
+      barrier.oldLayout = barrier.newLayout;
+      barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+      barrier.srcAccessMask = barrier.dstAccessMask;
+      barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+      commandBuffer.pipelineBarrier(
+        vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader, {}, {}, {}, barrier);
+
+      mipWidth = newMipWidth;
+      mipHeight = newMipHeight;
+    }
+
+    barrier.subresourceRange.baseMipLevel = mipLevels - 1;
+    barrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
+    barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+    barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+    commandBuffer.pipelineBarrier(
+      vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader, {}, {}, {}, barrier);
   }
   void createTextureSampler()
   {
@@ -874,8 +944,8 @@ private:
       .maxAnisotropy = properties.limits.maxSamplerAnisotropy,
       .compareEnable = vk::False,
       .compareOp = vk::CompareOp::eAlways,
-      .minLod = 0.f,
-      .maxLod = 0.f,
+      .minLod = static_cast<float>(mipLevels / 2.0),
+      .maxLod = vk::LodClampNone,
       .borderColor = vk::BorderColor::eIntOpaqueBlack,
       .unnormalizedCoordinates = vk::False,
     };
