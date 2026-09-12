@@ -343,7 +343,7 @@ private:
                        vk::PhysicalDeviceVulkan13Features,
                        vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
                        vk::PhysicalDeviceShaderDrawParametersFeatures>
-      featureChain{ { .features = { .samplerAnisotropy = true } },
+      featureChain{ { .features = { .sampleRateShading = vk::True, .samplerAnisotropy = true } },
                     { .synchronization2 = true, .dynamicRendering = true },
                     { .extendedDynamicState = true },
                     { .shaderDrawParameters = true } };
@@ -630,22 +630,28 @@ private:
       .viewportCount = 1, .pViewports = {}, .scissorCount = 1, .pScissors = {}
     };
 
-    vk::PipelineRasterizationStateCreateInfo rasterizerInfo{ .depthClampEnable = vk::False,
-                                                             .rasterizerDiscardEnable = vk::False,
-                                                             .polygonMode = vk::PolygonMode::eFill,
-                                                             .cullMode = vk::CullModeFlagBits::eBack,
-                                                             .frontFace = vk::FrontFace::eCounterClockwise,
-                                                             .depthBiasEnable = vk::False,
-                                                             .depthBiasSlopeFactor = 1.0f,
-                                                             .lineWidth = 1.0f };
+    vk::PipelineRasterizationStateCreateInfo rasterizerInfo{
+      .depthClampEnable = vk::False,
+      .rasterizerDiscardEnable = vk::False,
+      .polygonMode = vk::PolygonMode::eFill,
+      .cullMode = vk::CullModeFlagBits::eBack,
+      .frontFace = vk::FrontFace::eCounterClockwise,
+      .depthBiasEnable = vk::False,
+      .depthBiasSlopeFactor = 1.0f,
+      .lineWidth = 1.0f,
+    };
     vk::PipelineMultisampleStateCreateInfo multisamplingInfo{
       .rasterizationSamples = msaaSamples,
+      .sampleShadingEnable = vk::True,
+      .minSampleShading = 0.2f,
     };
-    vk::PipelineDepthStencilStateCreateInfo depthStencilInfo{ .depthTestEnable = vk::True,
-                                                              .depthWriteEnable = vk::True,
-                                                              .depthCompareOp = vk::CompareOp::eLess,
-                                                              .depthBoundsTestEnable = vk::False,
-                                                              .stencilTestEnable = vk::False };
+    vk::PipelineDepthStencilStateCreateInfo depthStencilInfo{
+      .depthTestEnable = vk::True,
+      .depthWriteEnable = vk::True,
+      .depthCompareOp = vk::CompareOp::eLess,
+      .depthBoundsTestEnable = vk::False,
+      .stencilTestEnable = vk::False,
+    };
     vk::Format depthFormat = findDepthFormat();
 
     vk::PipelineColorBlendAttachmentState colorBlendAttachment{
