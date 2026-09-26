@@ -222,6 +222,7 @@ private:
     bool supportsRequiredFeatures =
       features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters &&
       features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy &&
+      features.get<vk::PhysicalDeviceFeatures2>().features.sampleRateShading &&
       features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
       features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2 &&
       features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
@@ -277,15 +278,16 @@ private:
     std::vector<vk::QueueFamilyProperties> queueFamilyProperties = physicalDevice.getQueueFamilyProperties();
 
     size_t numFamilyProperties = queueFamilyProperties.size();
-    auto graphicsQueueFamilyProperty = std::ranges::find_if(queueFamilyProperties, [](auto const& qfp) {
-      return (qfp.queueFlags & vk::QueueFlagBits::eGraphics) != static_cast<vk::QueueFlags>(0);
+    auto graphicsAndComputeQueueFamilyProperty = std::ranges::find_if(queueFamilyProperties, [](auto const& qfp) {
+      return (qfp.queueFlags & vk::QueueFlagBits::eGraphics) != static_cast<vk::QueueFlags>(0) &&
+             (qfp.queueFlags & vk::QueueFlagBits::eCompute) != static_cast<vk::QueueFlags>(0);
     });
-    graphicsFamilyIndex =
-      static_cast<uint32_t>(std::distance(queueFamilyProperties.begin(), graphicsQueueFamilyProperty));
+    graphicsAndComputeFamilyIndex =
+      static_cast<uint32_t>(std::distance(queueFamilyProperties.begin(), graphicsAndComputeQueueFamilyProperty));
 
     // Check if graphicsIndex also supports presentation
-    presentFamilyIndex = physicalDevice.getSurfaceSupportKHR(graphicsFamilyIndex, *surface)
-                           ? graphicsFamilyIndex
+    presentFamilyIndex = physicalDevice.getSurfaceSupportKHR(graphicsAndComputeFamilyIndex, *surface)
+                           ? graphicsAndComputeFamilyIndex
                            : static_cast<uint32_t>(numFamilyProperties);
     if (presentFamilyIndex == numFamilyProperties) {
       // Otherwise, find a new family index that does support both
@@ -293,8 +295,8 @@ private:
         auto qfp = queueFamilyProperties[qFamilyIndex];
         if (qfp.queueFlags & vk::QueueFlagBits::eGraphics &&
             physicalDevice.getSurfaceSupportKHR(qFamilyIndex, *surface)) {
-          graphicsFamilyIndex = qFamilyIndex;
-          presentFamilyIndex = graphicsFamilyIndex;
+          graphicsAndComputeFamilyIndex = qFamilyIndex;
+          presentFamilyIndex = graphicsAndComputeFamilyIndex;
           break;
         }
       }
@@ -316,7 +318,7 @@ private:
       auto qfp = queueFamilyProperties[qFamilyIndex];
       if (qfp.queueFlags & vk::QueueFlagBits::eTransfer) {
         if ((qfp.queueFlags & vk::QueueFlagBits::eGraphics) == (vk::QueueFlagBits)0 &&
-            (qFamilyIndex != graphicsFamilyIndex && qFamilyIndex != presentFamilyIndex)) {
+            (qFamilyIndex != graphicsAndComputeFamilyIndex && qFamilyIndex != presentFamilyIndex)) {
           transferFamilyIndex = qFamilyIndex;
           break;
         }
@@ -327,17 +329,17 @@ private:
       transferFamilyIndex = potentialTransferIndex;
     }
     std::cout << "Num Family Properties: " << numFamilyProperties << std::endl;
-    std::cout << "Graphics Index: " << graphicsFamilyIndex << std::endl;
+    std::cout << "Graphics Index: " << graphicsAndComputeFamilyIndex << std::endl;
     std::cout << "Present Index: " << presentFamilyIndex << std::endl;
     std::cout << "Transfer Index: " << transferFamilyIndex << std::endl;
-    if ((graphicsFamilyIndex == numFamilyProperties) || (presentFamilyIndex == numFamilyProperties) ||
+    if ((graphicsAndComputeFamilyIndex == numFamilyProperties) || (presentFamilyIndex == numFamilyProperties) ||
         (transferFamilyIndex == numFamilyProperties)) {
       throw std::runtime_error("Could not find a queue for graphics or present or transfer");
     }
-    float queuePriority = 0.5f;
-    vk::DeviceQueueCreateInfo deviceQueueCreateInfo{ .queueFamilyIndex = graphicsFamilyIndex,
-                                                     .queueCount = 1,
-                                                     .pQueuePriorities = &queuePriority };
+    float queuePriority[2] = { 1.0f, 1.0f };
+    vk::DeviceQueueCreateInfo deviceQueueCreateInfo{ .queueFamilyIndex = graphicsAndComputeFamilyIndex,
+                                                     .queueCount = 2,
+                                                     .pQueuePriorities = queuePriority };
 
     vk::StructureChain<vk::PhysicalDeviceFeatures2,
                        vk::PhysicalDeviceVulkan13Features,
@@ -348,10 +350,10 @@ private:
                     { .extendedDynamicState = true },
                     { .shaderDrawParameters = true } };
     vk::DeviceCreateInfo deviceCreateInfo;
-    if (transferFamilyIndex != graphicsFamilyIndex) {
+    if (transferFamilyIndex != graphicsAndComputeFamilyIndex) {
       vk::DeviceQueueCreateInfo deviceTransferQueueCreateInfo{ .queueFamilyIndex = transferFamilyIndex,
                                                                .queueCount = 1,
-                                                               .pQueuePriorities = &queuePriority };
+                                                               .pQueuePriorities = queuePriority };
       vk::DeviceQueueCreateInfo queueCreateInfos[] = { deviceQueueCreateInfo, deviceTransferQueueCreateInfo };
       deviceCreateInfo = { .pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>(),
                            .queueCreateInfoCount = 2,
@@ -368,9 +370,10 @@ private:
 
     device = vk::raii::Device(physicalDevice, deviceCreateInfo);
 
-    graphicsQueue = vk::raii::Queue(device, graphicsFamilyIndex, 0);
+    graphicsQueue = vk::raii::Queue(device, graphicsAndComputeFamilyIndex, 0);
     presentQueue = vk::raii::Queue(device, presentFamilyIndex, 0);
     transferQueue = vk::raii::Queue(device, transferFamilyIndex, 0);
+    computeQueue = vk::raii::Queue(device, graphicsAndComputeFamilyIndex, 1);
   }
 
   uint32_t findQueueFamilies(vk::raii::PhysicalDevice physicalDevice)
@@ -429,9 +432,9 @@ private:
                                                       physicalDevice.getSurfacePresentModesKHR(*surface)),
                                                     .clipped = vk::True,
                                                     .oldSwapchain = nullptr };
-    uint32_t queueFamilyIndices[] = { graphicsFamilyIndex, presentFamilyIndex };
+    uint32_t queueFamilyIndices[] = { graphicsAndComputeFamilyIndex, presentFamilyIndex };
 
-    if (graphicsFamilyIndex != presentFamilyIndex) {
+    if (graphicsAndComputeFamilyIndex != presentFamilyIndex) {
       swapChainCreateInfo.imageSharingMode = vk::SharingMode::eConcurrent;
       swapChainCreateInfo.queueFamilyIndexCount = 2;
       swapChainCreateInfo.pQueueFamilyIndices = queueFamilyIndices;
@@ -779,7 +782,7 @@ private:
   {
     {
       vk::CommandPoolCreateInfo poolInfo{ .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-                                          .queueFamilyIndex = graphicsFamilyIndex };
+                                          .queueFamilyIndex = graphicsAndComputeFamilyIndex };
       graphicCommandPool = vk::raii::CommandPool(device, poolInfo);
     }
 
@@ -1444,13 +1447,14 @@ private:
   vk::raii::Queue graphicsQueue = nullptr;
   vk::raii::Queue presentQueue = nullptr;
   vk::raii::Queue transferQueue = nullptr;
+  vk::raii::Queue computeQueue = nullptr;
   vk::raii::SwapchainKHR swapChain = nullptr;
   std::vector<vk::Image> swapChainImages;
   std::vector<vk::raii::ImageView> swapChainImageViews;
   vk::SurfaceFormatKHR swapChainSurfaceFormat;
   vk::Extent2D swapChainExtent;
   vk::Format swapChainImageFormat = vk::Format::eUndefined;
-  uint32_t graphicsFamilyIndex = 0;
+  uint32_t graphicsAndComputeFamilyIndex = 0;
   uint32_t presentFamilyIndex = 0;
   uint32_t transferFamilyIndex = 0;
   vk::raii::PipelineLayout pipelineLayout = nullptr;
